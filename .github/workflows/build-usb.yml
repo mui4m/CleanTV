@@ -1,4 +1,4 @@
-name: Build BatADB APK for XGIMI RS10
+name: Build BatADB v2 - Open Hidden Dev Settings
 on:
   workflow_dispatch:
 jobs:
@@ -6,55 +6,51 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - name: Create AdbEnabler project
+
+      - name: Create AdbEnabler v2 project
         shell: bash
         run: |
-          mkdir -p AdbEnabler/app/src/main/java/com/cleantv/adbenabler
-          
-          cat > AdbEnabler/settings.gradle <<'EOF'
+          mkdir -p AdbEnablerV2/app/src/main/java/com/cleantv/adbenabler
+
+          cat > AdbEnablerV2/settings.gradle <<'EOF'
           include ':app'
           EOF
-          
-          cat > AdbEnabler/build.gradle <<'EOF'
+
+          cat > AdbEnablerV2/build.gradle <<'EOF'
           buildscript {
             repositories { google(); mavenCentral() }
             dependencies { classpath 'com.android.tools.build:gradle:8.2.0' }
           }
           allprojects { repositories { google(); mavenCentral() } }
           EOF
-          
-          cat > AdbEnabler/app/build.gradle <<'EOF'
+
+          cat > AdbEnablerV2/app/build.gradle <<'EOF'
           plugins { id 'com.android.application' }
           android {
             namespace 'com.cleantv.adbenabler'
             compileSdk 34
             defaultConfig {
-              applicationId "com.cleantv.adbenabler"
+              applicationId "com.cleantv.adbenabler.v2"
               minSdk 21
               targetSdk 34
-              versionCode 1
-              versionName "1.0"
+              versionCode 2
+              versionName "2.0"
             }
             buildTypes {
-              release { minifyEnabled false }
               debug { minifyEnabled false }
+              release { minifyEnabled false }
             }
           }
           dependencies {}
           EOF
-          
-          cat > AdbEnabler/app/src/main/AndroidManifest.xml <<'EOF'
+
+          cat > AdbEnablerV2/app/src/main/AndroidManifest.xml <<'EOF'
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
               <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS"/>
               <uses-permission android:name="android.permission.WRITE_SETTINGS"/>
-              <uses-permission android:name="android.permission.WRITE_GLOBAL_SETTINGS"/>
-              <application
-                  android:label="BatADB RS10"
-                  android:allowBackup="true">
-                  <activity
-                      android:name=".MainActivity"
-                      android:exported="true">
+              <application android:label="BatADB RS10 v2" android:allowBackup="true">
+                  <activity android:name=".MainActivity" android:exported="true">
                       <intent-filter>
                           <action android:name="android.intent.action.MAIN"/>
                           <category android:name="android.intent.category.LAUNCHER"/>
@@ -63,38 +59,91 @@ jobs:
               </application>
           </manifest>
           EOF
-          
-          cp /tmp/AdbEnabler.java AdbEnabler/app/src/main/java/com/cleantv/adbenabler/MainActivity.java 2>/dev/null || cp $GITHUB_WORKSPACE/../AdbEnabler.java AdbEnabler/app/src/main/java/com/cleantv/adbenabler/MainActivity.java || echo "Copy failed, creating inline"
-          
-          # If copy failed, create file directly
-          if [ ! -f AdbEnabler/app/src/main/java/com/cleantv/adbenabler/MainActivity.java ]; then
-          cat > AdbEnabler/app/src/main/java/com/cleantv/adbenabler/MainActivity.java <<'JAVA'
+
+          cat > AdbEnablerV2/app/src/main/java/com/cleantv/adbenabler/MainActivity.java <<'JAVA'
           package com.cleantv.adbenabler;
           import android.app.Activity;
+          import android.content.Intent;
           import android.os.Bundle;
-          import android.provider.Settings;
-          import android.widget.TextView;
+          import android.widget.*;
+          import android.view.*;
+          import android.util.Log;
+
           public class MainActivity extends Activity {
-              @Override protected void onCreate(Bundle savedInstanceState) {
-                  super.onCreate(savedInstanceState);
+              LinearLayout layout;
+              void log(String s) {
                   TextView tv = new TextView(this);
-                  tv.setPadding(30,30,30,30);
-                  StringBuilder log = new StringBuilder();
-                  log.append("=== Bat ADB RS10 ===\n");
-                  try { Settings.Global.putInt(getContentResolver(), Settings.Global.ADB_ENABLED, 1); log.append("[OK] adb_enabled\n"); } catch (Exception e) { log.append("[FAIL] "+e.getMessage()+"\n"); }
-                  try { Settings.Global.putInt(getContentResolver(), "adb_wifi_enabled", 1); log.append("[OK] adb_wifi_enabled\n"); } catch (Exception ex) { log.append("[FAIL] "+ex.getMessage()+"\n"); }
-                  try { Settings.Global.putInt(getContentResolver(), "development_settings_enabled", 1); log.append("[OK] dev enabled\n"); } catch (Exception ex) { log.append("[FAIL] "+ex.getMessage()+"\n"); }
-                  String[] cmds = {"setprop service.adb.tcp.port 5555","setprop persist.service.adb.enable 1","stop adbd","start adbd"};
-                  for (String c : cmds) { try { Runtime.getRuntime().exec(c).waitFor(); log.append("[OK] "+c+"\n"); } catch (Exception e) { log.append("[FAIL] "+c+"\n"); } }
-                  log.append("\nXong! Mo lai CapNhatMayChieu.");
-                  tv.setText(log.toString());
-                  setContentView(tv);
+                  tv.setText(s);
+                  tv.setTextSize(14);
+                  tv.setPadding(20,10,20,10);
+                  layout.addView(tv);
+                  Log.d("BatADBv2", s);
+              }
+              void addButton(String text, final Intent intent) {
+                  Button b = new Button(this);
+                  b.setText(text);
+                  b.setOnClickListener(new View.OnClickListener() {
+                      public void onClick(View v) {
+                          try {
+                              startActivity(intent);
+                              log("Da mo: " + text);
+                          } catch (Exception e) {
+                              log("FAIL mo " + text + ": " + e.getMessage());
+                          }
+                      }
+                  });
+                  layout.addView(b);
+              }
+              @Override
+              protected void onCreate(Bundle savedInstanceState) {
+                  super.onCreate(savedInstanceState);
+                  ScrollView scroll = new ScrollView(this);
+                  layout = new LinearLayout(this);
+                  layout.setOrientation(LinearLayout.VERTICAL);
+                  layout.setPadding(30,30,30,30);
+                  scroll.addView(layout);
+                  setContentView(scroll);
+
+                  TextView title = new TextView(this);
+                  title.setText("=== Bat ADB RS10 v2 ===\nBam tung nut de mo man hinh an:");
+                  title.setTextSize(18);
+                  layout.addView(title);
+
+                  // 1. Mo Development Settings goc cua Android
+                  Intent i1 = new Intent(android.provider.Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS);
+                  addButton("1. Mo Developer Options (goc Android)", i1);
+
+                  // 2. Mo Development Settings qua class name
+                  Intent i2 = new Intent();
+                  i2.setClassName("com.android.settings", "com.android.settings.DevelopmentSettings");
+                  addButton("2. Mo DevelopmentSettings (class)", i2);
+
+                  Intent i3 = new Intent();
+                  i3.setClassName("com.android.settings", "com.android.settings.Settings$DevelopmentSettingsActivity");
+                  addButton("3. Mo DevelopmentSettingsActivity", i3);
+
+                  // 3. Mo Settings Global
+                  Intent i4 = new Intent(android.provider.Settings.ACTION_DEVICE_INFO_SETTINGS);
+                  addButton("4. Mo Device Info (de bam 7 lan Build Number)", i4);
+
+                  // 4. Mo Factory Menu cua XGIMI
+                  Intent i5 = new Intent();
+                  i5.setClassName("com.xgimi.factory", "com.xgimi.factory.FactoryActivity");
+                  addButton("5. Mo XGIMI Factory Menu (neu co)", i5);
+
+                  Intent i6 = new Intent();
+                  i6.setClassName("com.xgimi.settings", "com.xgimi.settings.SettingsActivity");
+                  addButton("6. Mo XGIMI Settings goc", i6);
+
+                  log("\nHuong dan:");
+                  log("Bam nut 1, neu mo duoc Developer Options thi bat USB Debugging va Wireless Debugging.");
+                  log("Neu nut 1 khong duoc, bam nut 4 roi tim Build Number bam 7 lan.");
+                  log("Sau khi bat ADB, mo lai CapNhatMayChieu -> Viet hoa XGIMI.");
               }
           }
           JAVA
-          fi
-          
-          ls -R AdbEnabler
+
+          ls -R AdbEnablerV2
 
       - uses: actions/setup-java@v5
         with:
@@ -108,11 +157,11 @@ jobs:
       - name: Build APK
         shell: bash
         run: |
-          cd AdbEnabler
+          cd AdbEnablerV2
           gradle assembleDebug --stacktrace
-          ls -R app/build/outputs/apk/debug/
+          ls -lh app/build/outputs/apk/debug/
 
       - uses: actions/upload-artifact@v4
         with:
-          name: BatADB-RS10-APK
-          path: AdbEnabler/app/build/outputs/apk/debug/*.apk
+          name: BatADB-RS10-v2
+          path: AdbEnablerV2/app/build/outputs/apk/debug/*.apk
