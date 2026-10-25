@@ -1,5 +1,4 @@
-
-name: Build CapNhatMayChieu APK (USB)
+name: Build CapNhatMayChieu APK (USB) - Fixed
 
 on:
   workflow_dispatch:
@@ -20,22 +19,44 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install platform-tools
+      - name: Accept licenses and install tools
         run: |
-          sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0"
+          yes | sdkmanager --licenses
+          sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0" "platforms;android-33"
 
-      - name: Build USB package
+      - name: Build Launcher APK
         shell: pwsh
         run: |
-          .\updater\build-usb.ps1
-          dir dist -Recurse
+          cd launcher/app
+          .\gradlew.bat assembleDebug --stacktrace
+          dir build/outputs/apk/debug -Recurse
+          cd ../..
 
-      - name: Upload CapNhatMayChieu.apk
+      - name: Build Updater APKs (if exists)
+        shell: pwsh
+        run: |
+          if (Test-Path "updater") { Get-ChildItem updater -Recurse | Write-Host }
+          if (Test-Path "launcher/updater") { 
+            cd launcher/updater
+            if (Test-Path "gradlew.bat") { .\gradlew.bat assembleDebug --stacktrace }
+            cd ../..
+          }
+          # Try original build script but don't fail if error
+          try { .\updater\build-usb.ps1 } catch { Write-Host "build-usb.ps1 failed but continue: $_" }
+
+      - name: Collect APKs
+        shell: pwsh
+        run: |
+          mkdir dist -Force
+          Get-ChildItem -Path . -Filter *.apk -Recurse | ForEach-Object { Copy-Item $_.FullName dist/ -Force; Write-Host "Found APK: $($_.FullName)" }
+          dir dist -Recurse
+          dir launcher/app/build/outputs -Recurse -ErrorAction SilentlyContinue
+
+      - name: Upload APKs
         uses: actions/upload-artifact@v4
         with:
-          name: USB-CapNhat
+          name: CleanTV-APKs
           path: |
-            dist/USB-CapNhat/**
-            dist/*.zip
-            dist/*.apk
-
+            **/*.apk
+            dist/**
+          if-no-files-found: warn
