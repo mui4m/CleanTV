@@ -1,4 +1,4 @@
-name: Build USB-CapNhat Full (Fix all hardcoded paths)
+name: Build USB-CapNhat Full (Fix parser)
 
 on:
   workflow_dispatch:
@@ -18,73 +18,80 @@ jobs:
         with:
           gradle-version: 8.9
 
-      - name: Fix ALL hardcoded E:\buildtools paths
+      - name: Fix hardcoded paths and parser errors
         shell: pwsh
         run: |
-          Write-Host "=== Patching hardcoded paths ===" -ForegroundColor Green
-          
-          # 1. Patch build-synsepalum-overlay.ps1 - thay TAT CA cho cung
+          Write-Host "=== Fixing build-synsepalum-overlay.ps1 ===" -ForegroundColor Green
           $file1 = "tools/xgimi-vi/build-synsepalum-overlay.ps1"
           if (Test-Path $file1) {
-            $content = Get-Content $file1 -Raw
-            # Thay tat ca E:\buildtools\... thanh C:\Android\android-sdk\build-tools\34.0.0
-            $content = $content -replace 'E:\\buildtools\\android-sdk\\build-tools\\34\.0\.0', 'C:\Android\android-sdk\build-tools\34.0.0'
-            $content = $content -replace 'E:/buildtools/android-sdk/build-tools/34\.0\.0', 'C:/Android/android-sdk/build-tools/34.0.0'
-            # Thay dinh nghia $bt = "..." thanh auto-detect
-            $content = $content -replace '\$bt\s*=\s*"[^"]*build-tools[^"]*"', @'
-          $bt = "C:\Android\android-sdk\build-tools\34.0.0"
-          if (-not (Test-Path "$bt\aapt.exe")) {
-            $aapt = Get-ChildItem -Path $env:ANDROID_HOME -Recurse -Filter aapt.exe -ErrorAction SilentlyContinue | Select-Object -First 1
-            if ($aapt) { $bt = $aapt.DirectoryName }
-          }
-          Write-Host "Using aapt from: $bt"
-          '@
-            Set-Content -Path $file1 -Value $content -Encoding UTF8
-            Write-Host "Patched $file1"
+            $lines = Get-Content $file1
+            $newLines = @()
+            foreach ($line in $lines) {
+              # Thay tat ca duong dan cung E:\buildtools...
+              $line = $line -replace 'E:\\buildtools\\android-sdk\\build-tools\\34\.0\.0', 'C:\Android\android-sdk\build-tools\34.0.0'
+              $line = $line -replace 'E:/buildtools/android-sdk/build-tools/34\.0\.0', 'C:/Android/android-sdk/build-tools/34.0.0'
+              # Thay dinh nghia $bt = "...34.0.0" thanh auto
+              if ($line -match '^\s*\$bt\s*=\s*".*build-tools.*"' -or $line -match '^\s*\$bt\s*=\s*''.*build-tools.*''') {
+                $line = '  $bt = "C:\Android\android-sdk\build-tools\34.0.0"'
+                $newLines += '  if (-not (Test-Path "$bt\aapt.exe")) {'
+                $newLines += '    $aapt = Get-ChildItem -Path $env:ANDROID_HOME -Recurse -Filter aapt.exe -ErrorAction SilentlyContinue | Select-Object -First 1'
+                $newLines += '    if ($aapt) { $bt = $aapt.DirectoryName }'
+                $newLines += '  }'
+                $newLines += '  Write-Host "Using aapt from: $bt"'
+              }
+              $newLines += $line
+            }
+            Set-Content -Path $file1 -Value $newLines -Encoding UTF8
+            Write-Host "Fixed $file1"
           }
 
-          # 2. Patch updater/build-usb.ps1 - bo qua loi neu file overlay chua co
+          Write-Host "=== Fixing updater/build-usb.ps1 parser error ===" -ForegroundColor Green
           $file2 = "updater/build-usb.ps1"
           if (Test-Path $file2) {
-            $content2 = Get-Content $file2 -Raw
-            # Thay throw thanh Write-Host
-            $content2 = $content2 -replace "throw 'Dung ban dich Cai dat XGIMI Android 6 that bai'", "Write-Host 'Bo qua loi Android 6 - tiep tuc' -ForegroundColor Yellow"
-            # Thay Copy-Item thanh co kiem tra ton tai
-            $content2 = $content2 -replace 'Copy-Item \(Join-Path \$root ''dist\\XgimiSettingsVi-overlay.apk''\)', 'if (Test-Path (Join-Path $root ''dist\XgimiSettingsVi-overlay.apk'')) { Copy-Item (Join-Path $root ''dist\XgimiSettingsVi-overlay.apk'')'
-            # Dong ngoac cho if tren - them } vao cuoi dong copy tiep theo
-            # Don gian: thay tat ca Copy-Item dist\Xgimi... thanh try/catch
-            $content2 = $content2 -replace 'Copy-Item \(Join-Path \$root ''dist\\XgimiSettingsVi-overlay.apk''\) \(Join-Path \$root ''([^'']+)''\)', 'try { Copy-Item (Join-Path $root ''dist\XgimiSettingsVi-overlay.apk'') (Join-Path $root ''$1'') -ErrorAction Stop } catch { Write-Host "Skip missing XgimiSettingsVi-overlay.apk" }'
+            $content = Get-Content $file2 -Raw
+            
+            # 1. Thay throw thanh Write-Host
+            $content = $content -replace "throw 'Dung ban dich Cai dat XGIMI Android 6 that bai'", "Write-Host 'Bo qua loi Android 6 - tiep tuc build' -ForegroundColor Yellow"
+            
+            # 2. Fix dong Copy-Item bi thieu } - thay bang version an toan co kiem tra file ton tai
+            # Tim va thay the toan bo dong Copy-Item XgimiSettingsVi-overlay.apk
+            $content = $content -replace 'Copy-Item \(Join-Path \$root ''dist\\XgimiSettingsVi-overlay\.apk''\) \(Join-Path \$root ''[^'']+''\)', @'
+if (Test-Path (Join-Path $root 'dist\XgimiSettingsVi-overlay.apk')) {
+              Copy-Item (Join-Path $root 'dist\XgimiSettingsVi-overlay.apk') (Join-Path $root 'dist\USB-CapNhat\XgimiSettingsVi-overlay.apk') -Force
+            } else {
+              Write-Host "Skip XgimiSettingsVi-overlay.apk - file not built (not needed for RS10)" -ForegroundColor Yellow
+            }
+'@
 
-            Set-Content -Path $file2 -Value $content2 -Encoding UTF8
-            Write-Host "Patched $file2"
+            # Dam bao khong con dong if le loi tu lan patch truoc
+            $content = $content -replace 'if \(Test-Path \(Join-Path \$root ''dist\\XgimiSettingsVi-overlay\.apk''\)\) \{ Copy-It.*', ''
+
+            Set-Content -Path $file2 -Value $content -Encoding UTF8
+            Write-Host "Fixed $file2 - checking syntax:"
+            Get-Content $file2 | Select-Object -First 40 | Write-Host
           }
 
-          Write-Host "=== Done patching ==="
-
-      - name: Install build-tools 34.0.0
+      - name: Install build-tools
         shell: pwsh
         run: |
           $sdkRoot = $env:ANDROID_HOME
           if (-not $sdkRoot) { $sdkRoot = "C:\Android\android-sdk" }
-          Write-Host "SDK Root: $sdkRoot"
           $sdkmanager = Get-ChildItem -Path $sdkRoot -Recurse -Filter sdkmanager.bat -ErrorAction SilentlyContinue | Select-Object -First 1
           if ($sdkmanager) {
-            Write-Host "Using: $($sdkmanager.FullName)"
             & $sdkmanager.FullName "build-tools;34.0.0" "platform-tools"
           } else {
             sdkmanager "build-tools;34.0.0" "platform-tools"
           }
-          dir "$sdkRoot\build-tools\34.0.0" | Write-Host
 
       - name: Build USB package
         shell: pwsh
         run: |
           Write-Host "Running build-usb.ps1..."
           .\updater\build-usb.ps1
-          Write-Host "=== dist ==="
-          dir dist -Recurse -ErrorAction SilentlyContinue
+          Write-Host "`n=== dist ===" -ForegroundColor Green
+          Get-ChildItem dist -Recurse -ErrorAction SilentlyContinue | Format-Table Name, Length
 
-      - name: Upload USB-CapNhat
+      - name: Upload
         uses: actions/upload-artifact@v4
         with:
           name: USB-CapNhat-Full
