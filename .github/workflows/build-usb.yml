@@ -16,33 +16,27 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Setup Android SDK (manual)
-        shell: pwsh
-        run: |
-          # windows-latest already has Android SDK at C:\Android\android-sdk
-          $sdkRoot = $env:ANDROID_HOME
-          if (-not $sdkRoot) { $sdkRoot = "C:\Android\android-sdk" }
-          Write-Host "SDK at $sdkRoot"
-          # Accept licenses
-          $sdkmanager = "$sdkRoot\cmdline-tools\latest\bin\sdkmanager.bat"
-          if (Test-Path $sdkmanager) {
-            echo y | & $sdkmanager --licenses
-            & $sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0"
-          } else {
-            # fallback sdkmanager from older location
-            $alt = Get-ChildItem -Path $sdkRoot -Recurse -Filter sdkmanager.bat | Select-Object -First 1
-            if ($alt) {
-              echo y | & $alt.FullName --licenses
-              & $alt.FullName "platform-tools" "platforms;android-34" "build-tools;34.0.0"
-            }
-          }
-          Get-ChildItem $sdkRoot -Directory | Write-Host
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.7
 
       - name: Build Launcher APK
         shell: pwsh
         run: |
           cd launcher/app
-          ./gradlew.bat assembleDebug --stacktrace
+          Write-Host "Listing files:"
+          dir
+          if (Test-Path "gradlew.bat") {
+            Write-Host "Using gradlew.bat"
+            .\gradlew.bat assembleDebug --stacktrace
+          } elseif (Test-Path "gradlew") {
+            Write-Host "Using gradlew"
+            bash ./gradlew assembleDebug --stacktrace
+          } else {
+            Write-Host "No wrapper found, using system gradle"
+            gradle assembleDebug --stacktrace
+          }
           cd ../..
 
       - name: Collect APKs
@@ -53,7 +47,9 @@ jobs:
             Write-Host "Found APK: $($_.FullName)"
             Copy-Item $_.FullName dist/ -Force
           }
-          dir dist -Recurse
+          Write-Host "=== dist ==="
+          dir dist -Recurse -ErrorAction SilentlyContinue
+          Write-Host "=== launcher/app/build/outputs ==="
           dir launcher/app/build/outputs -Recurse -ErrorAction SilentlyContinue
 
       - name: Upload APK
@@ -62,6 +58,6 @@ jobs:
           name: CleanTV-APKs
           path: |
             dist/*.apk
-            launcher/app/build/outputs/apk/debug/*.apk
+            launcher/app/build/outputs/apk/**/*.apk
             **/build/outputs/apk/**/*.apk
-          if-no-files-found: warn
+          if-no-files-found: error
