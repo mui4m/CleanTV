@@ -1,4 +1,4 @@
-name: Build USB Full - Both APKs Fixed v2
+name: Build Both APKs Correct
 on:
   workflow_dispatch:
 jobs:
@@ -14,91 +14,78 @@ jobs:
         with:
           gradle-version: 8.9
 
-      - name: List project structure
+      - name: Find all gradle projects
         shell: pwsh
         run: |
-          Write-Host "=== Root ==="
-          dir
-          Write-Host "`n=== launcher ==="
-          dir launcher -Recurse -Filter *.gradle | Format-Table FullName
-          Write-Host "`n=== updater ==="
-          dir updater -Recurse -Filter *.gradle | Format-Table FullName
+          Get-ChildItem -Recurse -Filter build.gradle | Format-Table FullName
 
       - name: Build Launcher
         shell: pwsh
         run: |
           cd launcher/app
-          gradle assembleDebug --stacktrace
+          gradle assembleDebug
           cd ../..
+          dir launcher/app/build/outputs/apk/debug -Recurse
 
-      - name: Build Updater
+      - name: Build Updater (CapNhatMayChieu)
         shell: pwsh
         run: |
-          if (Test-Path updater/app/build.gradle) {
-            Write-Host "Building updater/app"
-            cd updater/app
-            gradle assembleDebug --stacktrace
+          # Updater project is launcher/updater
+          if (Test-Path launcher/updater/build.gradle) {
+            cd launcher/updater
+            gradle assembleDebug
             cd ../..
-          } elseif (Test-Path updater/build.gradle) {
-            Write-Host "Building updater"
-            cd updater
-            gradle assembleDebug --stacktrace
-            cd ..
+          } elseif (Test-Path launcher/updater/app/build.gradle) {
+            cd launcher/updater/app
+            gradle assembleDebug
+            cd ../../..
           } else {
-            Write-Host "Searching for gradle files in updater"
-            $gradleFiles = Get-ChildItem updater -Recurse -Filter build.gradle
-            foreach ($f in $gradleFiles) {
-              Write-Host "Found: $($f.FullName) - building in $($f.DirectoryName)"
+            Write-Host "Checking launcher/updater structure"
+            dir launcher/updater -Recurse | Format-Table Name, Directory
+            # Try build all gradle in launcher/updater
+            $files = Get-ChildItem launcher/updater -Recurse -Filter build.gradle
+            foreach ($f in $files) {
               Push-Location $f.DirectoryName
-              gradle assembleDebug --stacktrace
+              Write-Host "Building in $($f.DirectoryName)"
+              gradle assembleDebug
               Pop-Location
             }
           }
-          Write-Host "`n=== APKs found ==="
-          Get-ChildItem -Recurse -Filter *.apk | Format-Table FullName, Length
+          Get-ChildItem -Path launcher/updater -Recurse -Filter *.apk | Format-Table FullName, Length
 
-      - name: Assemble USB
+      - name: Assemble final USB
         shell: pwsh
         run: |
           mkdir dist/USB-CapNhat -Force
-          mkdir dist/USB-CapNhat/launcher -Force
-
-          $launcherApk = Get-ChildItem launcher/app/build/outputs/apk/debug -Filter *.apk -Recurse | Select-Object -First 1
-          if ($launcherApk) {
-            Copy-Item $launcherApk.FullName dist/USB-CapNhat/launcher/launcher.apk -Force
-            Copy-Item $launcherApk.FullName dist/launcher.apk -Force
-            Write-Host "Launcher: $($launcherApk.Length) bytes"
-          }
-
-          $updaterApk = Get-ChildItem updater -Filter *.apk -Recurse | Where-Object { $_.FullName -like "*debug*" } | Select-Object -First 1
-          if (-not $updaterApk) { $updaterApk = Get-ChildItem updater -Filter *.apk -Recurse | Select-Object -First 1 }
+          $launcher = Get-ChildItem launcher/app/build/outputs/apk/debug -Filter *.apk | Select-Object -First 1
+          $updater = Get-ChildItem launcher/updater -Filter *.apk -Recurse | Select-Object -First 1
           
-          if ($updaterApk) {
-            Copy-Item $updaterApk.FullName dist/USB-CapNhat/CapNhatMayChieu.apk -Force
-            Copy-Item $updaterApk.FullName dist/CapNhatMayChieu.apk -Force
-            Write-Host "Updater: $($updaterApk.Length) bytes - $($updaterApk.FullName)"
+          if ($launcher) {
+            Copy-Item $launcher.FullName dist/USB-CapNhat/launcher.apk -Force
+            Copy-Item $launcher.FullName dist/launcher.apk -Force
+            Write-Host "Launcher: $($launcher.Length) bytes - $($launcher.FullName)"
+          }
+          if ($updater) {
+            Copy-Item $updater.FullName dist/USB-CapNhat/CapNhatMayChieu.apk -Force
+            Copy-Item $updater.FullName dist/CapNhatMayChieu.apk -Force
+            Write-Host "Updater: $($updater.Length) bytes - $($updater.FullName)"
           } else {
-            Write-Host "No updater APK found, listing all APKs:" -ForegroundColor Red
+            Write-Host "Updater not found!" -ForegroundColor Red
             Get-ChildItem -Filter *.apk -Recurse | Format-Table FullName, Length
           }
 
-          if (Test-Path tools/xgimi-vi) { Copy-Item tools/xgimi-vi dist/USB-CapNhat/xgimi-vi -Recurse -Force -ErrorAction SilentlyContinue }
-          
-          Write-Host "`n=== Final check ==="
-          $f1 = Get-Item dist/USB-CapNhat/launcher/launcher.apk -ErrorAction SilentlyContinue
-          $f2 = Get-Item dist/USB-CapNhat/CapNhatMayChieu.apk -ErrorAction SilentlyContinue
-          if ($f1 -and $f2) {
-            Write-Host "Launcher: $($f1.Length) bytes"
-            Write-Host "Updater: $($f2.Length) bytes"
-            $h1 = (Get-FileHash $f1.FullName -Algorithm MD5).Hash
-            $h2 = (Get-FileHash $f2.FullName -Algorithm MD5).Hash
+          if ($launcher -and $updater) {
+            $h1 = (Get-FileHash $launcher.FullName -Algorithm MD5).Hash
+            $h2 = (Get-FileHash $updater.FullName -Algorithm MD5).Hash
             Write-Host "Launcher MD5: $h1"
             Write-Host "Updater MD5: $h2"
-            if ($h1 -eq $h2) { Write-Host "FAIL: Giong nhau!" -ForegroundColor Red } else { Write-Host "OK: Khac nhau!" -ForegroundColor Green }
+            if ($h1 -eq $h2) { Write-Host "FAIL: 2 file giong nhau!" -ForegroundColor Red } else { Write-Host "OK: 2 file khac nhau" -ForegroundColor Green }
           }
-          Get-ChildItem dist -Recurse | Format-Table Name, Length
+
+          if (Test-Path tools/xgimi-vi) { Copy-Item tools/xgimi-vi dist/USB-CapNhat/ -Recurse -Force -ErrorAction SilentlyContinue }
+          dir dist -Recurse
 
       - uses: actions/upload-artifact@v4
         with:
-          name: USB-CapNhat-Fixed
+          name: USB-CapNhat-Fixed-Both
           path: dist/**
