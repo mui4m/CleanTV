@@ -1,4 +1,4 @@
-name: Build CapNhatMayChieu APK (USB) - Fixed
+name: Build CleanTV APKs
 
 on:
   workflow_dispatch:
@@ -8,55 +8,71 @@ jobs:
     runs-on: windows-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
+        # v3 still uses node20 but we force run, warnings are ok
+        # If fails, we install manually below
 
-      - name: Accept licenses and install tools
+      - name: Install SDK components
+        shell: pwsh
         run: |
-          yes | sdkmanager --licenses
+          $env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
+          if (-not $env:ANDROID_HOME) { $env:ANDROID_HOME = "C:\Android\android-sdk" }
+          Write-Host "ANDROID_HOME=$env:ANDROID_HOME"
+          # Accept licenses
+          echo y | sdkmanager --licenses 2>&1 | Out-Host
           sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0" "platforms;android-33"
 
-      - name: Build Launcher APK
+      - name: Build Launcher
         shell: pwsh
         run: |
           cd launcher/app
-          .\gradlew.bat assembleDebug --stacktrace
-          dir build/outputs/apk/debug -Recurse
+          Write-Host "Building launcher..."
+          .\gradlew.bat assembleDebug --stacktrace --info
           cd ../..
 
-      - name: Build Updater APKs (if exists)
+      - name: Try build updater
         shell: pwsh
         run: |
-          if (Test-Path "updater") { Get-ChildItem updater -Recurse | Write-Host }
-          if (Test-Path "launcher/updater") { 
+          # Build phone version if exists
+          if (Test-Path "launcher/updater/gradlew.bat") {
             cd launcher/updater
-            if (Test-Path "gradlew.bat") { .\gradlew.bat assembleDebug --stacktrace }
+            .\gradlew.bat assembleDebug --stacktrace
             cd ../..
           }
-          # Try original build script but don't fail if error
-          try { .\updater\build-usb.ps1 } catch { Write-Host "build-usb.ps1 failed but continue: $_" }
+          if (Test-Path "updater/CapNhat") {
+            dir updater -Recurse
+          }
 
-      - name: Collect APKs
+      - name: Find and copy APKs
         shell: pwsh
         run: |
-          mkdir dist -Force
-          Get-ChildItem -Path . -Filter *.apk -Recurse | ForEach-Object { Copy-Item $_.FullName dist/ -Force; Write-Host "Found APK: $($_.FullName)" }
-          dir dist -Recurse
-          dir launcher/app/build/outputs -Recurse -ErrorAction SilentlyContinue
+          mkdir dist -Force | Out-Null
+          $apks = Get-ChildItem -Path . -Filter *.apk -Recurse
+          foreach ($apk in $apks) {
+            Write-Host "Found: $($apk.FullName)"
+            Copy-Item $apk.FullName dist/ -Force
+          }
+          Get-ChildItem dist -Recurse
+          if ((Get-ChildItem dist -Filter *.apk).Count -eq 0) {
+            Write-Host "No APK found, listing build outputs..."
+            Get-ChildItem launcher -Recurse -Filter *.apk
+          }
 
-      - name: Upload APKs
+      - name: Upload
         uses: actions/upload-artifact@v4
         with:
           name: CleanTV-APKs
           path: |
-            **/*.apk
-            dist/**
+            dist/**/*.apk
+            launcher/app/build/outputs/apk/**/*.apk
+            **/build/outputs/apk/**/*.apk
           if-no-files-found: warn
