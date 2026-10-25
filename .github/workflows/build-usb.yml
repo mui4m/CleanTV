@@ -1,0 +1,39 @@
+name: Build CapNhatMayChieu APK (USB)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install platform-tools
+        run: |
+          sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0"
+
+      - name: Build USB package
+        shell: pwsh
+        run: |
+          .\updater\build-usb.ps1
+          dir dist -Recurse
+
+      - name: Upload CapNhatMayChieu.apk
+        uses: actions/upload-artifact@v4
+        with:
+          name: USB-CapNhat
+          path: |
+            dist/USB-CapNhat/**
+            dist/*.zip
+            dist/*.apk
