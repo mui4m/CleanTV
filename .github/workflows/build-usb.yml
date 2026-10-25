@@ -16,63 +16,52 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-        # v3 still uses node20 but we force run, warnings are ok
-        # If fails, we install manually below
-
-      - name: Install SDK components
+      - name: Setup Android SDK (manual)
         shell: pwsh
         run: |
-          $env:ANDROID_HOME = "$env:LOCALAPPDATA\Android\Sdk"
-          if (-not $env:ANDROID_HOME) { $env:ANDROID_HOME = "C:\Android\android-sdk" }
-          Write-Host "ANDROID_HOME=$env:ANDROID_HOME"
+          # windows-latest already has Android SDK at C:\Android\android-sdk
+          $sdkRoot = $env:ANDROID_HOME
+          if (-not $sdkRoot) { $sdkRoot = "C:\Android\android-sdk" }
+          Write-Host "SDK at $sdkRoot"
           # Accept licenses
-          echo y | sdkmanager --licenses 2>&1 | Out-Host
-          sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0" "platforms;android-33"
+          $sdkmanager = "$sdkRoot\cmdline-tools\latest\bin\sdkmanager.bat"
+          if (Test-Path $sdkmanager) {
+            echo y | & $sdkmanager --licenses
+            & $sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0"
+          } else {
+            # fallback sdkmanager from older location
+            $alt = Get-ChildItem -Path $sdkRoot -Recurse -Filter sdkmanager.bat | Select-Object -First 1
+            if ($alt) {
+              echo y | & $alt.FullName --licenses
+              & $alt.FullName "platform-tools" "platforms;android-34" "build-tools;34.0.0"
+            }
+          }
+          Get-ChildItem $sdkRoot -Directory | Write-Host
 
-      - name: Build Launcher
+      - name: Build Launcher APK
         shell: pwsh
         run: |
           cd launcher/app
-          Write-Host "Building launcher..."
-          .\gradlew.bat assembleDebug --stacktrace --info
+          ./gradlew.bat assembleDebug --stacktrace
           cd ../..
 
-      - name: Try build updater
+      - name: Collect APKs
         shell: pwsh
         run: |
-          # Build phone version if exists
-          if (Test-Path "launcher/updater/gradlew.bat") {
-            cd launcher/updater
-            .\gradlew.bat assembleDebug --stacktrace
-            cd ../..
+          mkdir dist -Force
+          Get-ChildItem -Recurse -Filter *.apk | ForEach-Object {
+            Write-Host "Found APK: $($_.FullName)"
+            Copy-Item $_.FullName dist/ -Force
           }
-          if (Test-Path "updater/CapNhat") {
-            dir updater -Recurse
-          }
+          dir dist -Recurse
+          dir launcher/app/build/outputs -Recurse -ErrorAction SilentlyContinue
 
-      - name: Find and copy APKs
-        shell: pwsh
-        run: |
-          mkdir dist -Force | Out-Null
-          $apks = Get-ChildItem -Path . -Filter *.apk -Recurse
-          foreach ($apk in $apks) {
-            Write-Host "Found: $($apk.FullName)"
-            Copy-Item $apk.FullName dist/ -Force
-          }
-          Get-ChildItem dist -Recurse
-          if ((Get-ChildItem dist -Filter *.apk).Count -eq 0) {
-            Write-Host "No APK found, listing build outputs..."
-            Get-ChildItem launcher -Recurse -Filter *.apk
-          }
-
-      - name: Upload
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: CleanTV-APKs
           path: |
-            dist/**/*.apk
-            launcher/app/build/outputs/apk/**/*.apk
+            dist/*.apk
+            launcher/app/build/outputs/apk/debug/*.apk
             **/build/outputs/apk/**/*.apk
           if-no-files-found: warn
