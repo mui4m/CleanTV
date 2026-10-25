@@ -1,91 +1,118 @@
-name: Build Both APKs Correct
+name: Build BatADB APK for XGIMI RS10
 on:
   workflow_dispatch:
 jobs:
   build:
-    runs-on: windows-latest
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+      - name: Create AdbEnabler project
+        shell: bash
+        run: |
+          mkdir -p AdbEnabler/app/src/main/java/com/cleantv/adbenabler
+          
+          cat > AdbEnabler/settings.gradle <<'EOF'
+          include ':app'
+          EOF
+          
+          cat > AdbEnabler/build.gradle <<'EOF'
+          buildscript {
+            repositories { google(); mavenCentral() }
+            dependencies { classpath 'com.android.tools.build:gradle:8.2.0' }
+          }
+          allprojects { repositories { google(); mavenCentral() } }
+          EOF
+          
+          cat > AdbEnabler/app/build.gradle <<'EOF'
+          plugins { id 'com.android.application' }
+          android {
+            namespace 'com.cleantv.adbenabler'
+            compileSdk 34
+            defaultConfig {
+              applicationId "com.cleantv.adbenabler"
+              minSdk 21
+              targetSdk 34
+              versionCode 1
+              versionName "1.0"
+            }
+            buildTypes {
+              release { minifyEnabled false }
+              debug { minifyEnabled false }
+            }
+          }
+          dependencies {}
+          EOF
+          
+          cat > AdbEnabler/app/src/main/AndroidManifest.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS"/>
+              <uses-permission android:name="android.permission.WRITE_SETTINGS"/>
+              <uses-permission android:name="android.permission.WRITE_GLOBAL_SETTINGS"/>
+              <application
+                  android:label="BatADB RS10"
+                  android:allowBackup="true">
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN"/>
+                          <category android:name="android.intent.category.LAUNCHER"/>
+                      </intent-filter>
+                  </activity>
+              </application>
+          </manifest>
+          EOF
+          
+          cp /tmp/AdbEnabler.java AdbEnabler/app/src/main/java/com/cleantv/adbenabler/MainActivity.java 2>/dev/null || cp $GITHUB_WORKSPACE/../AdbEnabler.java AdbEnabler/app/src/main/java/com/cleantv/adbenabler/MainActivity.java || echo "Copy failed, creating inline"
+          
+          # If copy failed, create file directly
+          if [ ! -f AdbEnabler/app/src/main/java/com/cleantv/adbenabler/MainActivity.java ]; then
+          cat > AdbEnabler/app/src/main/java/com/cleantv/adbenabler/MainActivity.java <<'JAVA'
+          package com.cleantv.adbenabler;
+          import android.app.Activity;
+          import android.os.Bundle;
+          import android.provider.Settings;
+          import android.widget.TextView;
+          public class MainActivity extends Activity {
+              @Override protected void onCreate(Bundle savedInstanceState) {
+                  super.onCreate(savedInstanceState);
+                  TextView tv = new TextView(this);
+                  tv.setPadding(30,30,30,30);
+                  StringBuilder log = new StringBuilder();
+                  log.append("=== Bat ADB RS10 ===\n");
+                  try { Settings.Global.putInt(getContentResolver(), Settings.Global.ADB_ENABLED, 1); log.append("[OK] adb_enabled\n"); } catch (Exception e) { log.append("[FAIL] "+e.getMessage()+"\n"); }
+                  try { Settings.Global.putInt(getContentResolver(), "adb_wifi_enabled", 1); log.append("[OK] adb_wifi_enabled\n"); } catch (Exception ex) { log.append("[FAIL] "+ex.getMessage()+"\n"); }
+                  try { Settings.Global.putInt(getContentResolver(), "development_settings_enabled", 1); log.append("[OK] dev enabled\n"); } catch (Exception ex) { log.append("[FAIL] "+ex.getMessage()+"\n"); }
+                  String[] cmds = {"setprop service.adb.tcp.port 5555","setprop persist.service.adb.enable 1","stop adbd","start adbd"};
+                  for (String c : cmds) { try { Runtime.getRuntime().exec(c).waitFor(); log.append("[OK] "+c+"\n"); } catch (Exception e) { log.append("[FAIL] "+c+"\n"); } }
+                  log.append("\nXong! Mo lai CapNhatMayChieu.");
+                  tv.setText(log.toString());
+                  setContentView(tv);
+              }
+          }
+          JAVA
+          fi
+          
+          ls -R AdbEnabler
+
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
+
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: 8.9
 
-      - name: Find all gradle projects
-        shell: pwsh
+      - name: Build APK
+        shell: bash
         run: |
-          Get-ChildItem -Recurse -Filter build.gradle | Format-Table FullName
-
-      - name: Build Launcher
-        shell: pwsh
-        run: |
-          cd launcher/app
-          gradle assembleDebug
-          cd ../..
-          dir launcher/app/build/outputs/apk/debug -Recurse
-
-      - name: Build Updater (CapNhatMayChieu)
-        shell: pwsh
-        run: |
-          # Updater project is launcher/updater
-          if (Test-Path launcher/updater/build.gradle) {
-            cd launcher/updater
-            gradle assembleDebug
-            cd ../..
-          } elseif (Test-Path launcher/updater/app/build.gradle) {
-            cd launcher/updater/app
-            gradle assembleDebug
-            cd ../../..
-          } else {
-            Write-Host "Checking launcher/updater structure"
-            dir launcher/updater -Recurse | Format-Table Name, Directory
-            # Try build all gradle in launcher/updater
-            $files = Get-ChildItem launcher/updater -Recurse -Filter build.gradle
-            foreach ($f in $files) {
-              Push-Location $f.DirectoryName
-              Write-Host "Building in $($f.DirectoryName)"
-              gradle assembleDebug
-              Pop-Location
-            }
-          }
-          Get-ChildItem -Path launcher/updater -Recurse -Filter *.apk | Format-Table FullName, Length
-
-      - name: Assemble final USB
-        shell: pwsh
-        run: |
-          mkdir dist/USB-CapNhat -Force
-          $launcher = Get-ChildItem launcher/app/build/outputs/apk/debug -Filter *.apk | Select-Object -First 1
-          $updater = Get-ChildItem launcher/updater -Filter *.apk -Recurse | Select-Object -First 1
-          
-          if ($launcher) {
-            Copy-Item $launcher.FullName dist/USB-CapNhat/launcher.apk -Force
-            Copy-Item $launcher.FullName dist/launcher.apk -Force
-            Write-Host "Launcher: $($launcher.Length) bytes - $($launcher.FullName)"
-          }
-          if ($updater) {
-            Copy-Item $updater.FullName dist/USB-CapNhat/CapNhatMayChieu.apk -Force
-            Copy-Item $updater.FullName dist/CapNhatMayChieu.apk -Force
-            Write-Host "Updater: $($updater.Length) bytes - $($updater.FullName)"
-          } else {
-            Write-Host "Updater not found!" -ForegroundColor Red
-            Get-ChildItem -Filter *.apk -Recurse | Format-Table FullName, Length
-          }
-
-          if ($launcher -and $updater) {
-            $h1 = (Get-FileHash $launcher.FullName -Algorithm MD5).Hash
-            $h2 = (Get-FileHash $updater.FullName -Algorithm MD5).Hash
-            Write-Host "Launcher MD5: $h1"
-            Write-Host "Updater MD5: $h2"
-            if ($h1 -eq $h2) { Write-Host "FAIL: 2 file giong nhau!" -ForegroundColor Red } else { Write-Host "OK: 2 file khac nhau" -ForegroundColor Green }
-          }
-
-          if (Test-Path tools/xgimi-vi) { Copy-Item tools/xgimi-vi dist/USB-CapNhat/ -Recurse -Force -ErrorAction SilentlyContinue }
-          dir dist -Recurse
+          cd AdbEnabler
+          gradle assembleDebug --stacktrace
+          ls -R app/build/outputs/apk/debug/
 
       - uses: actions/upload-artifact@v4
         with:
-          name: USB-CapNhat-Fixed-Both
-          path: dist/**
+          name: BatADB-RS10-APK
+          path: AdbEnabler/app/build/outputs/apk/debug/*.apk
