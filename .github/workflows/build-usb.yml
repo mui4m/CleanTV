@@ -1,4 +1,4 @@
-name: Build CleanTV APKs
+name: Build USB Full - Both APKs
 on:
   workflow_dispatch:
 jobs:
@@ -13,22 +13,103 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: 8.9
-      - name: Build Launcher
+
+      - name: Build Launcher APK
         shell: pwsh
         run: |
+          Write-Host "=== Building Launcher ===" -ForegroundColor Green
           cd launcher/app
           gradle assembleDebug --stacktrace
           cd ../..
-      - name: Make USB-CapNhat folder
+          dir launcher/app/build/outputs/apk/debug/ -Recurse
+
+      - name: Build Updater APKs (CapNhatMayChieu)
         shell: pwsh
         run: |
+          Write-Host "=== Building Updater (CapNhatMayChieu) ===" -ForegroundColor Green
+          # Tim file build.gradle trong updater
+          dir updater -Recurse -Filter *.gradle | Write-Host
+          if (Test-Path updater/app/build.gradle) {
+            cd updater/app
+            gradle assembleDebug --stacktrace
+            cd ../..
+          } elseif (Test-Path updater/build.gradle) {
+            cd updater
+            gradle assembleDebug --stacktrace
+            cd ..
+          } else {
+            Write-Host "No gradle file in updater, checking root"
+            gradle :updater:assembleDebug --stacktrace -p .
+          }
+          dir updater -Recurse -Filter *.apk | Write-Host
+
+      - name: Assemble USB-CapNhat correctly
+        shell: pwsh
+        run: |
+          Write-Host "=== Assembling USB-CapNhat ===" -ForegroundColor Green
           mkdir dist/USB-CapNhat -Force
-          Copy-Item launcher/app/build/outputs/apk/debug/*.apk dist/USB-CapNhat/CapNhatMayChieu.apk -Force -ErrorAction SilentlyContinue
-          Copy-Item launcher/app/build/outputs/apk/debug/*.apk dist/ -Force -ErrorAction SilentlyContinue
-          if (Test-Path tools/xgimi-vi) { Copy-Item tools/xgimi-vi dist/USB-CapNhat/xgimi-vi -Recurse -Force -ErrorAction SilentlyContinue }
-          if (Test-Path examples) { Copy-Item examples dist/USB-CapNhat/examples -Recurse -Force -ErrorAction SilentlyContinue }
-          dir dist -Recurse
+          mkdir dist/USB-CapNhat/launcher -Force
+          mkdir dist/USB-CapNhat/xgimi-vi -Force
+
+          # 1. Launcher APK (com.gathin.tvhome)
+          $launcherApk = Get-ChildItem -Path launcher/app/build/outputs/apk/debug -Filter *.apk -Recurse | Select-Object -First 1
+          if ($launcherApk) {
+            Copy-Item $launcherApk.FullName dist/USB-CapNhat/launcher/launcher.apk -Force
+            Copy-Item $launcherApk.FullName dist/launcher-app-debug.apk -Force
+            Write-Host "Launcher: $($launcherApk.FullName) -> launcher.apk"
+          }
+
+          # 2. Updater APK (CapNhatMayChieu.apk) - PHẢI khác launcher
+          $updaterApk = Get-ChildItem -Path updater -Filter *.apk -Recurse | Where-Object { $_.FullName -like "*debug*" } | Select-Object -First 1
+          if (-not $updaterApk) {
+            $updaterApk = Get-ChildItem -Path updater/build -Filter *.apk -Recurse | Select-Object -First 1
+          }
+          if ($updaterApk) {
+            Copy-Item $updaterApk.FullName dist/USB-CapNhat/CapNhatMayChieu.apk -Force
+            Copy-Item $updaterApk.FullName dist/CapNhatMayChieu.apk -Force
+            Write-Host "Updater: $($updaterApk.FullName) -> CapNhatMayChieu.apk"
+          } else {
+            Write-Host "ERROR: Không tìm thấy Updater APK!" -ForegroundColor Red
+            Write-Host "Tìm trong toàn bộ project:"
+            Get-ChildItem -Filter *.apk -Recurse | Write-Host
+          }
+
+          # 3. Copy xgimi-vi (nguồn Việt hoá, chưa build overlay thì copy nguồn)
+          if (Test-Path tools/xgimi-vi) {
+            Copy-Item tools/xgimi-vi/* dist/USB-CapNhat/xgimi-vi/ -Recurse -Force -ErrorAction SilentlyContinue
+            Write-Host "Copied tools/xgimi-vi"
+          }
+          if (Test-Path examples) {
+            Copy-Item examples dist/USB-CapNhat/ -Recurse -Force -ErrorAction SilentlyContinue
+          }
+          if (Test-Path tools) {
+            Copy-Item tools dist/USB-CapNhat/tools -Recurse -Force -ErrorAction SilentlyContinue
+          }
+
+          # 4. So sánh 2 APK có khác nhau không
+          Write-Host "`n=== Kiểm tra 2 APK ===" -ForegroundColor Yellow
+          $f1 = Get-Item dist/USB-CapNhat/launcher/launcher.apk -ErrorAction SilentlyContinue
+          $f2 = Get-Item dist/USB-CapNhat/CapNhatMayChieu.apk -ErrorAction SilentlyContinue
+          if ($f1 -and $f2) {
+            Write-Host "Launcher size: $($f1.Length) bytes"
+            Write-Host "CapNhatMayChieu size: $($f2.Length) bytes"
+            if ($f1.Length -eq $f2.Length) {
+              Write-Host "WARNING: 2 file bằng nhau, có thể vẫn giống nhau!" -ForegroundColor Red
+              # Tính hash để chắc chắn
+              $h1 = (Get-FileHash $f1.FullName -Algorithm MD5).Hash
+              $h2 = (Get-FileHash $f2.FullName -Algorithm MD5).Hash
+              Write-Host "Launcher MD5: $h1"
+              Write-Host "Updater MD5: $h2"
+              if ($h1 -eq $h2) { Write-Host "FAIL: 2 APK giống hệt nhau!" -ForegroundColor Red } else { Write-Host "OK: 2 APK khác nhau (cùng size nhưng khác hash)" -ForegroundColor Green }
+            } else {
+              Write-Host "OK: 2 APK khác nhau về size" -ForegroundColor Green
+            }
+          }
+
+          Write-Host "`n=== dist ==="
+          Get-ChildItem dist -Recurse | Format-Table Name, Length, Directory -AutoSize
+
       - uses: actions/upload-artifact@v4
         with:
-          name: USB-CapNhat-Full
+          name: USB-CapNhat-Fixed
           path: dist/**
