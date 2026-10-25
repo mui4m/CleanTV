@@ -1,63 +1,23 @@
-name: Build CleanTV APKs
-
+name: Build USB-CapNhat Full
 on:
   workflow_dispatch:
-
 jobs:
   build:
     runs-on: windows-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v5
-
-      - name: Setup JDK 17
-        uses: actions/setup-java@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
-
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: 8.7
-
-      - name: Build Launcher APK
-        shell: pwsh
+      - shell: pwsh
         run: |
-          cd launcher/app
-          Write-Host "Listing files:"
-          dir
-          if (Test-Path "gradlew.bat") {
-            Write-Host "Using gradlew.bat"
-            .\gradlew.bat assembleDebug --stacktrace
-          } elseif (Test-Path "gradlew") {
-            Write-Host "Using gradlew"
-            bash ./gradlew assembleDebug --stacktrace
-          } else {
-            Write-Host "No wrapper found, using system gradle"
-            gradle assembleDebug --stacktrace
-          }
-          cd ../..
-
-      - name: Collect APKs
-        shell: pwsh
-        run: |
-          mkdir dist -Force
-          Get-ChildItem -Recurse -Filter *.apk | ForEach-Object {
-            Write-Host "Found APK: $($_.FullName)"
-            Copy-Item $_.FullName dist/ -Force
-          }
-          Write-Host "=== dist ==="
-          dir dist -Recurse -ErrorAction SilentlyContinue
-          Write-Host "=== launcher/app/build/outputs ==="
-          dir launcher/app/build/outputs -Recurse -ErrorAction SilentlyContinue
-
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
+          .\updater\build-usb.ps1
+          dir dist -Recurse
+      - uses: actions/upload-artifact@v4
         with:
-          name: CleanTV-APKs
-          path: |
-            dist/*.apk
-            launcher/app/build/outputs/apk/**/*.apk
-            **/build/outputs/apk/**/*.apk
-          if-no-files-found: error
+          name: USB-CapNhat-Full
+          path: dist/**
